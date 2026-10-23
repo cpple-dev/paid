@@ -1,0 +1,63 @@
+name: send
+
+# One dispatched run is a *warm* worker: it joins the mesh, serves every job
+# the VPS pushes to it, and stops itself after `idle_minutes` without one
+# (10 by default).  The VPS only dispatches again once no runner is alive,
+# so a mail never starts an Action of its own.
+
+on:
+  workflow_dispatch:
+    inputs:
+      warm_id:
+        description: Warm-runner slot issued by the Hwasongpho-19 server
+        required: false
+        type: string
+      job_id:
+        description: Legacy single-job id (one dispatch, one mail)
+        required: false
+        type: string
+      server_url:
+        description: Public base URL of the dispatching Hwasongpho-19 server
+        required: false
+        type: string
+      idle_minutes:
+        description: Stop after this many minutes without a job
+        required: false
+        default: "10"
+        type: string
+
+permissions:
+  contents: read
+
+# Every run is its own group: two dispatches must run side by side, and no
+# run may cancel another.
+concurrency:
+  group: send-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    # GitHub kills a job at 6 h; the agent leaves at RUNNER_MAX_MINUTES
+    # (330) so it can release its slot and peer cleanly first.
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install --quiet -r requirements.txt
+
+      - name: Join Anywherelan and run sender backend
+        env:
+          SERVER_URL: ${{ inputs.server_url || secrets.SERVER_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          WARM_ID: ${{ inputs.warm_id }}
+          JOB_ID: ${{ inputs.job_id }}
+          RUNNER_IDLE_MINUTES: ${{ inputs.idle_minutes }}
+          RUNNER_PORT: "8720"
+          PYTHONUNBUFFERED: "1"
+        run: python -m sender.agent
